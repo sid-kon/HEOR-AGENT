@@ -6,7 +6,36 @@ embedder, supports multi-query retrieval with cross-query deduplication, and
 can filter results by detected econometric method tags.
 """
 
+import sys
 from pathlib import Path
+
+# Python 3.14 compatibility — stub broken opentelemetry proto modules before
+# chromadb is imported (same shim as rag/ingestion.py; harmless if already set).
+if sys.version_info >= (3, 14):
+    from unittest.mock import MagicMock as _MagicMock
+    _STUB_MODS = [
+        "opentelemetry.proto",
+        "opentelemetry.proto.common",
+        "opentelemetry.proto.common.v1",
+        "opentelemetry.proto.common.v1.common_pb2",
+        "opentelemetry.proto.resource",
+        "opentelemetry.proto.resource.v1",
+        "opentelemetry.proto.resource.v1.resource_pb2",
+        "opentelemetry.proto.trace",
+        "opentelemetry.proto.trace.v1",
+        "opentelemetry.proto.trace.v1.trace_pb2",
+        "opentelemetry.proto.logs",
+        "opentelemetry.proto.logs.v1",
+        "opentelemetry.proto.logs.v1.logs_pb2",
+        "opentelemetry.exporter.otlp.proto.grpc",
+        "opentelemetry.exporter.otlp.proto.grpc.exporter",
+        "opentelemetry.exporter.otlp.proto.grpc.trace_exporter",
+        "opentelemetry.exporter.otlp.proto.grpc.log_exporter",
+        "opentelemetry.exporter.otlp.proto.grpc.metric_exporter",
+    ]
+    for _mod_name in _STUB_MODS:
+        if _mod_name not in sys.modules:
+            sys.modules[_mod_name] = _MagicMock()
 
 import chromadb
 import numpy as np

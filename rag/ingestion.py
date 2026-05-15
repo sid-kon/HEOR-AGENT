@@ -11,8 +11,42 @@ with SentenceTransformers, and persisted to a Chroma collection.
 """
 
 import re
+import sys
 from pathlib import Path
 from typing import Optional
+
+# ── Python 3.14 compatibility shim ───────────────────────────────────────────
+# chromadb imports opentelemetry for telemetry, which ships proto-generated
+# files that use the deprecated protobuf 3.x descriptor API
+# (`_descriptor._internal_create_key`) removed in Python 3.14.
+# We stub out those modules with MagicMock before chromadb is imported so the
+# import chain never reaches the broken generated files.  chromadb's telemetry
+# will silently no-op, which is fine for our use case.
+if sys.version_info >= (3, 14):
+    from unittest.mock import MagicMock as _MagicMock
+    _STUB_MODS = [
+        "opentelemetry.proto",
+        "opentelemetry.proto.common",
+        "opentelemetry.proto.common.v1",
+        "opentelemetry.proto.common.v1.common_pb2",
+        "opentelemetry.proto.resource",
+        "opentelemetry.proto.resource.v1",
+        "opentelemetry.proto.resource.v1.resource_pb2",
+        "opentelemetry.proto.trace",
+        "opentelemetry.proto.trace.v1",
+        "opentelemetry.proto.trace.v1.trace_pb2",
+        "opentelemetry.proto.logs",
+        "opentelemetry.proto.logs.v1",
+        "opentelemetry.proto.logs.v1.logs_pb2",
+        "opentelemetry.exporter.otlp.proto.grpc",
+        "opentelemetry.exporter.otlp.proto.grpc.exporter",
+        "opentelemetry.exporter.otlp.proto.grpc.trace_exporter",
+        "opentelemetry.exporter.otlp.proto.grpc.log_exporter",
+        "opentelemetry.exporter.otlp.proto.grpc.metric_exporter",
+    ]
+    for _mod_name in _STUB_MODS:
+        if _mod_name not in sys.modules:
+            sys.modules[_mod_name] = _MagicMock()
 
 import pdfplumber
 import chromadb
