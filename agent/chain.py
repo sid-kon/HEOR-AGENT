@@ -115,42 +115,24 @@ class HEORAgentChain:
         problem_type: str = expansion.get("detected_problem_type", "causal_inference")
         estimand: str = expansion.get("estimand", "ATE")
 
-        # ── Step 3: ChromaDB multi-query retrieval ────────────────────────────
+        # ── Step 3: Pinecone multi-query retrieval ────────────────────────────
         results = self.retriever.retrieve(
             queries=expanded_queries,
             method_filters=active_methods or None,
         )
-        chroma_context = self.retriever.format_context(results)
-        self.last_context = chroma_context
+        pinecone_context = self.retriever.format_context(results)
+        self.last_context = pinecone_context
 
-        # ── Step 4: PubMed pre-retrieval (optional) ───────────────────────────
-        pubmed_context = ""
-        if pubmed_enabled:
-            pubmed_context = await self._fetch_pubmed_context(standalone, problem_type)
+        # Cap context fed to generation prompt (~3 000 tokens)
+        if len(pinecone_context) > _MAX_CONTEXT_CHARS:
+            pinecone_context = pinecone_context[:_MAX_CONTEXT_CHARS] + "\n… [context truncated]"
 
-        # ── Step 5: combine Pinecone + PubMed into enriched context ─────────
-        # Hard-cap PubMed summary to avoid token bloat
-        if pubmed_context and len(pubmed_context) > _MAX_PUBMED_CHARS:
-            pubmed_context = pubmed_context[:_MAX_PUBMED_CHARS] + " … [truncated]"
-
-        if pubmed_context:
-            enriched_context = (
-                "=== TEXTBOOK METHODOLOGY ===\n"
-                f"{chroma_context}\n\n"
-                "=== PEER-REVIEWED EMPIRICAL EVIDENCE (PubMed) ===\n"
-                f"{pubmed_context}"
-            )
-        else:
-            enriched_context = chroma_context
-
-        # Cap total context fed to the generation prompt (~3 000 tokens)
-        if len(enriched_context) > _MAX_CONTEXT_CHARS:
-            enriched_context = enriched_context[:_MAX_CONTEXT_CHARS] + "\n… [context truncated]"
-
-        # ── Step 6: grounded generation ───────────────────────────────────────
-        history_str = self._format_history(last_n=2)   # 2 turns keeps token cost low
+        # ── Step 4: grounded generation (textbook context only) ──────────────
+        # PubMed runs AFTER generation so its large token payload does not
+        # collide with the generation call inside the same 1-minute TPM window.
+        history_str = self._format_history(last_n=2)
         generation_prompt = RAG_GENERATION_PROMPT.format(
-            retrieved_context=enriched_context,
+            retrieved_context=pinecone_context,
             user_query=user_query,
             problem_type=problem_type,
             estimand=estimand,
@@ -162,18 +144,27 @@ class HEORAgentChain:
             system=SYSTEM_PROMPT,
         )
 
-        # ── Step 7: parse JSON response ───────────────────────────────────────
+        # ── Step 5: parse JSON response ───────────────────────────────────────
         parsed = parse_llm_json(raw_answer)
         if not parsed:
             parsed = {"error": "JSON parse failed", "raw_response": raw_answer}
 
-        # ── Step 8: update chat history ───────────────────────────────────────
+        # ── Step 6: update chat history ───────────────────────────────────────
         self._append_turn(user_query, raw_answer)
+
+        # ── Step 7: PubMed retrieval (after generation, separate TPM window) ──
+        # Running PubMed after generation means the ~15-20k token MCP round-trips
+        # no longer share the same 1-minute window as the generation call.
+        pubmed_context = ""
+        if pubmed_enabled:
+            pubmed_context = await self._fetch_pubmed_context(standalone, problem_type)
+            if pubmed_context and len(pubmed_context) > _MAX_PUBMED_CHARS:
+                pubmed_context = pubmed_context[:_MAX_PUBMED_CHARS] + " … [truncated]"
 
         # ── Step 9: return enriched result ────────────────────────────────────
         return {
             **parsed,
-            "raw_context": chroma_context,
+            "raw_context": pinecone_context,
             "pubmed_context": pubmed_context,
             "expanded_queries": expanded_queries,
         }
