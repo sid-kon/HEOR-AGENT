@@ -80,23 +80,58 @@ def _init_session_state() -> None:
     if "pubmed_enabled" not in st.session_state:
         st.session_state.pubmed_enabled = True
 
+    # Cache sources/methods — fetching all 16k IDs takes ~161 API calls;
+    # caching avoids re-running that on every render.
+    if "cached_sources" not in st.session_state:
+        st.session_state.cached_sources = None   # None = not yet fetched
+    if "cached_methods" not in st.session_state:
+        st.session_state.cached_methods = None
+
 
 _init_session_state()
 
 
-# ── KB info helper (single collection scan per render) ────────────────────────
+# ── KB info helper ────────────────────────────────────────────────────────────
 def _get_kb_info() -> tuple[dict, list[str], list[str]]:
-    """Return (stats_dict, sorted_source_list, sorted_method_list) from Pinecone."""
-    try:
-        ingestion: PineconeIngestion = st.session_state.ingestion
-        if ingestion is None:
-            return {"total_documents": 0, "unique_sources": 0}, [], []
-        raw_stats = ingestion._index.describe_index_stats()
-        total     = raw_stats.get("total_vector_count", 0)
-        sources, methods = ingestion.get_indexed_sources_and_methods()
-        return {"total_documents": total, "unique_sources": len(sources)}, sources, methods
-    except Exception:
+    """
+    Return (stats_dict, sorted_source_list, sorted_method_list) from Pinecone.
+
+    Total vector count is fetched on every render (1 fast API call).
+    Sources + methods are fetched once and cached in session_state — iterating
+    all 16k IDs takes ~160 paginated calls which would time out on every render.
+    """
+    ingestion: PineconeIngestion = st.session_state.ingestion
+    if ingestion is None:
         return {"total_documents": 0, "unique_sources": 0}, [], []
+
+    # ── Fast path: total count (1 API call) ──────────────────────────────────
+    total = 0
+    try:
+        raw_stats = ingestion._index.describe_index_stats()
+        total = getattr(raw_stats, "total_vector_count", None) or raw_stats.get("total_vector_count", 0)
+    except Exception:
+        pass
+
+    # ── Slow path: source + method list (cached after first fetch) ───────────
+    if st.session_state.cached_sources is None:
+        try:
+            sources, methods = ingestion.get_indexed_sources_and_methods()
+            st.session_state.cached_sources = sources
+            st.session_state.cached_methods = methods
+        except Exception:
+            st.session_state.cached_sources = []
+            st.session_state.cached_methods = []
+
+    sources = st.session_state.cached_sources or []
+    methods = st.session_state.cached_methods or []
+
+    return {"total_documents": total, "unique_sources": len(sources)}, sources, methods
+
+
+def _refresh_kb_cache() -> None:
+    """Force a re-fetch of source/method list on next render."""
+    st.session_state.cached_sources = None
+    st.session_state.cached_methods = None
 
 
 def _ensure_chain() -> HEORAgentChain | None:
@@ -385,6 +420,8 @@ with st.sidebar:
                             retriever=st.session_state.retriever,
                             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
                         )
+                    # Invalidate source cache so the sidebar reflects new ingestion
+                    _refresh_kb_cache()
 
                     st.rerun()
 
@@ -395,15 +432,20 @@ with st.sidebar:
     st.divider()
 
     # ── 4. Indexed sources expander ───────────────────────────────────────────
-    with st.expander(
-        f"Indexed Sources ({unique_sources})",
-        expanded=unique_sources > 0 and unique_sources <= 8,
-    ):
+    src_col, refresh_col = st.columns([4, 1])
+    with src_col:
+        src_label = f"Indexed Sources ({unique_sources})"
+    with refresh_col:
+        if st.button("↻", help="Refresh source list from Pinecone", key="refresh_sources"):
+            _refresh_kb_cache()
+            st.rerun()
+
+    with st.expander(src_label, expanded=unique_sources > 0 and unique_sources <= 8):
         if indexed_sources:
             for src in indexed_sources:
                 st.markdown(f"- `{src}`")
         else:
-            st.caption("No documents ingested yet.")
+            st.caption("No documents ingested yet. Sources load on first render — click ↻ to refresh.")
 
     st.divider()
 
