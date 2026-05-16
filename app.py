@@ -273,20 +273,6 @@ with st.sidebar:
     st.divider()
 
     # ── API keys status ───────────────────────────────────────────────────────
-    env_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not env_key or env_key == "your_key_here":
-        entered_key = st.text_input(
-            "Anthropic API Key",
-            type="password",
-            placeholder="sk-ant-…",
-            help="Required to run the agent. Set ANTHROPIC_API_KEY in .env to skip this.",
-        )
-        if entered_key:
-            os.environ["ANTHROPIC_API_KEY"] = entered_key
-            st.session_state.chain = None
-    else:
-        st.success("Anthropic API key loaded", icon=None)
-
     if not PINECONE_API_KEY:
         st.error("PINECONE_API_KEY not set. Add it to your .env file.")
     else:
@@ -471,20 +457,17 @@ for msg in st.session_state.messages:
             render_response(msg["content"])
 
 # ── Chat input ────────────────────────────────────────────────────────────────
-api_ready   = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
-pine_ready  = bool(PINECONE_API_KEY)
-docs_ready  = total_chunks > 0
+pine_ready = bool(PINECONE_API_KEY)
+docs_ready = total_chunks > 0
 
-if not api_ready:
-    st.info("Enter your Anthropic API key in the sidebar to start querying.")
-elif not pine_ready:
+if not pine_ready:
     st.info("Add PINECONE_API_KEY to your .env file to connect the vector store.")
 elif not docs_ready:
     st.info("Ingest at least one PDF from the sidebar to start querying.")
 
 user_query = st.chat_input(
     "Describe your HEOR problem…",
-    disabled=not (api_ready and pine_ready and docs_ready),
+    disabled=not (pine_ready and docs_ready),
 )
 
 if user_query:
@@ -526,7 +509,7 @@ if user_query:
                 st.error(str(exc))
                 st.caption(
                     "The agent encountered an error. "
-                    "Check your API key and that PDFs are ingested."
+                    "Check that PDFs are ingested and your .env keys are valid."
                 )
                 st.session_state.messages.append(
                     {"role": "assistant", "content": error_result}
