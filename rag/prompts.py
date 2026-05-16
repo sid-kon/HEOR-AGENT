@@ -81,6 +81,24 @@ ACTIVE METHOD FILTERS (comma-separated tags the user has selected; \
 empty string means no filter):
 {active_methods}
 
+AVAILABLE METHOD REPERTOIRE
+Select "suggested_methods" ONLY from this list of supported estimators:
+  IV/2SLS         — endogeneity, weak instruments, LATE
+  PSM             — propensity score matching, common support, ATT
+  IPW             — inverse probability weighting, stabilised weights
+  AIPW            — augmented IPW, doubly robust estimation
+  DiD             — difference-in-differences, parallel trends
+  Sun-Abraham     — staggered DiD, heterogeneous treatment timing
+  RDD             — regression discontinuity, sharp and fuzzy designs
+  Two-Part Model  — semi-continuous outcomes, zero mass, cost/utilization
+  Hurdle Model    — count data with excess zeros, NB or Poisson second part
+  GLM-Gamma       — strictly positive, right-skewed cost data
+  GLM-Tweedie     — mixed zero/positive outcomes, compound Poisson
+  GLM-NB          — overdispersed count data (utilization, admissions)
+  Panel-FE        — fixed effects, within estimator, time-invariant confounders
+  Panel-RE        — random effects, Hausman test, cross-unit variation needed
+  Hausman-Taylor  — IV within panel, correlated random effects
+
 TASK
 Analyze the user query and produce a JSON object that will drive multi-query \
 retrieval. Think about which textbook sections, chapters, and equations are \
@@ -97,19 +115,25 @@ The JSON must conform to this exact schema:
     "<retrieval query 3 — assumption testing or diagnostics>"
   ],
   "detected_problem_type": "<one of: endogeneity | selection_bias | confounding | \
-censoring | heterogeneity | measurement_error | causal_inference | cost_modelling>",
-  "estimand": "<one of: ATE | ATT | LATE | CEA | CUA | BIA | NMB>",
+censoring | heterogeneity | measurement_error | causal_inference | cost_modelling | \
+panel_data | count_or_utilization_data | semi_continuous_outcomes>",
+  "estimand": "<one of: ATE | ATT | LATE | CEA | CUA | BIA | NMB | unspecified>",
   "suggested_methods": [
-    "<method name 1>",
-    "<method name 2>",
-    "<method name 3>"
+    "<method name from the AVAILABLE METHOD REPERTOIRE above>",
+    "<method name from the AVAILABLE METHOD REPERTOIRE above>",
+    "<method name from the AVAILABLE METHOD REPERTOIRE above>"
   ]
 }}
 
 RULES
 - "queries" must contain exactly 3 strings, each semantically distinct, \
   optimized for dense retrieval against healthcare economics textbook passages.
-- "suggested_methods" must contain between 1 and 3 entries.
+- "suggested_methods" must contain between 1 and 3 entries drawn from the \
+  AVAILABLE METHOD REPERTOIRE list above. Do not invent method names.
+- Choose "detected_problem_type" by the primary econometric threat: \
+  use "panel_data" when repeated measures / FE / RE are the central issue; \
+  use "count_or_utilization_data" for overdispersed counts or admissions; \
+  use "semi_continuous_outcomes" for cost or utilization with a zero mass.
 - Do not add any key not listed in the schema above.
 - Do not include explanations outside the JSON object.
 """
@@ -135,6 +159,34 @@ TARGET ESTIMAND: {estimand}
 CONVERSATION HISTORY (last 4 turns, oldest first)
 {chat_history}
 
+SUPPORTED METHOD REPERTOIRE
+You MUST select "recommended_method" and "alternatives_considered" exclusively \
+from the following estimators. Use the Python libraries indicated for "code_stub".
+
+  Method              | Primary library / call
+  --------------------|--------------------------------------------------
+  IV/2SLS             | linearmodels: IV2SLS.from_formula(...)
+  PSM                 | sklearn: LogisticRegression for scores; \
+                        scipy/numpy for matching; psmpy optional
+  IPW                 | statsmodels: logit for ps; numpy for weights
+  AIPW                | econml: LinearDRLearner or manual doubly-robust formula
+  DiD                 | statsmodels: OLS with interaction terms or \
+                        linearmodels: PanelOLS with entity + time FE
+  Sun-Abraham         | pyfixest: feols(...) with sunab() or manual cohort\
+×time interactions
+  RDD                 | rdrobust (Python port) or statsmodels: local linear
+  Two-Part Model      | Part 1: statsmodels Logit; \
+                        Part 2: statsmodels GLM(family=Gamma(log))
+  Hurdle Model        | Part 1: statsmodels Logit; \
+                        Part 2: statsmodels NegativeBinomial (truncated)
+  GLM-Gamma           | statsmodels: GLM(family=Gamma(link=log()))
+  GLM-Tweedie         | statsmodels: GLM(family=Tweedie(var_power=p, \
+                        link=log()))
+  GLM-NB              | statsmodels: NegativeBinomial or GLM with NB family
+  Panel-FE            | linearmodels: PanelOLS(..., entity_effects=True)
+  Panel-RE            | linearmodels: RandomEffects(...)
+  Hausman-Taylor      | linearmodels: HausmanTaylor(...)
+
 TASK
 Using the retrieved context as your primary evidence base, generate a \
 comprehensive analytical response. Where the retrieved context does not \
@@ -149,7 +201,8 @@ The JSON must conform to this exact schema:
   "problem_diagnosis": "<2–3 sentences identifying the econometric threat, \
 its origin in this context, and the direction of bias>",
 
-  "recommended_method": "<name of the primary recommended estimator>",
+  "recommended_method": "<name of the primary recommended estimator — \
+must be one of the methods in the SUPPORTED METHOD REPERTOIRE above>",
 
   "alternatives_considered": [
     "<MethodName — one-sentence reason it was rejected for this setting>",
@@ -164,7 +217,8 @@ must hold for the recommended estimator to yield a consistent estimate>",
 including link function, clustering strategy, fixed effects, bandwidth, \
 or caliper as applicable>",
     "code_stub": "<self-contained Python code, 8–15 lines, showing \
-the core estimation call with realistic placeholder variable names>",
+the core estimation call using the library indicated in the METHOD REPERTOIRE \
+table above, with realistic placeholder variable names>",
     "key_parameters": [
       "<parameter name and recommended value or decision rule>",
       "<parameter name and recommended value or decision rule>"
@@ -194,10 +248,12 @@ referencing quality and directness of retrieved evidence>"
 }}
 
 RULES
+- "recommended_method" MUST be drawn from the SUPPORTED METHOD REPERTOIRE table.
+- "code_stub" MUST use the Python library/call shown in that table for the \
+  chosen method. Code must be syntactically plausible (8–15 lines).
 - Populate "citations" only with sources that appear in the retrieved context above.
-- "code_stub" must be syntactically plausible Python — use common libraries \
-  (statsmodels, linearmodels, sklearn, pandas, numpy) as appropriate.
-- "assumption_tests" must contain at least 2 entries.
+- "assumption_tests" must contain at least 2 entries with explicit decision rules \
+  (e.g. "Kleibergen-Paap rk Wald F > 10 for instrument strength").
 - "alternatives_considered" must contain at least 1 entry.
 - Do not add any key not listed in the schema above.
 """
