@@ -78,7 +78,7 @@ def _init_session_state() -> None:
         st.session_state.active_methods = []
 
     if "pubmed_enabled" not in st.session_state:
-        st.session_state.pubmed_enabled = True
+        st.session_state.pubmed_enabled = False
 
     # Cache sources/methods — fetching all 16k IDs takes ~161 API calls;
     # caching avoids re-running that on every render.
@@ -451,12 +451,11 @@ with st.sidebar:
 
     # ── 5. PubMed validation toggle ───────────────────────────────────────────
     st.toggle(
-        "Enable PubMed retrieval",
+        "PubMed evidence (higher cost)",
         key="pubmed_enabled",
         help=(
-            "Before generating a response, search PubMed for peer-reviewed "
-            "methodological evidence and incorporate it into the answer. "
-            "Adds ~4–6 s per query."
+            "Search PubMed for peer-reviewed evidence before generating. "
+            "Off by default — significantly increases cost and latency per query."
         ),
     )
 
@@ -522,12 +521,7 @@ if user_query:
     with st.chat_message("assistant"):
         active    = st.session_state.get("active_methods", [])
         pubmed_on = st.session_state.get("pubmed_enabled", True)
-        spinner_msg = (
-            "Retrieving textbook evidence + searching PubMed…"
-            if pubmed_on
-            else "Retrieving evidence and generating analysis…"
-        )
-        with st.spinner(spinner_msg):
+        with st.spinner("Generating solution…"):
             try:
                 chain = _ensure_chain()
                 if chain is None:

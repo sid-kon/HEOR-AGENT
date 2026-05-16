@@ -48,18 +48,14 @@ _PUBMED_MCP_SERVER: dict = {
 }
 
 _PUBMED_SYSTEM_PROMPT = """\
-You are a literature retrieval agent. Given an HEOR problem, identify the \
-3 most relevant methodological approaches from PubMed. Return ONLY a JSON \
-object with key 'pubmed_context' containing a single string summarising the \
-most relevant methods, estimators, and published applications found. Be \
-concise — maximum 400 words. Prioritise methods papers and applied \
-oncology/HEOR studies from the last 10 years."""
+Retrieve PubMed evidence for an HEOR query. Return ONLY JSON: \
+{{"pubmed_context": "<150-word summary of the 2 most relevant published \
+methods or applications found>"}}.  Be maximally concise."""
 
 _PUBMED_USER_TEMPLATE = """\
-{standalone_question}
-Detected problem type: {problem_type}
-Focus on: what causal inference or survival analysis methods have been \
-validated in peer-reviewed literature for this specific problem type."""
+Problem: {standalone_question}
+Type: {problem_type}
+Find: peer-reviewed causal-inference or health-economics methods for this problem."""
 
 
 class HEORAgentChain:
@@ -257,7 +253,7 @@ class HEORAgentChain:
         def _api_call() -> str:
             response = self._client.beta.messages.create(
                 model=self.model,
-                max_tokens=800,
+                max_tokens=400,
                 system=_PUBMED_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
                 mcp_servers=[_PUBMED_MCP_SERVER],  # type: ignore[arg-type]
