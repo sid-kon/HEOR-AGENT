@@ -165,33 +165,45 @@ class PineconeIngestion:
 
     def get_indexed_sources_and_methods(self) -> tuple[list[str], list[str]]:
         """
-        Return (sorted_source_list, sorted_method_list) by sampling vectors
-        from the index. Used by the sidebar UI.
+        Return (sorted_source_list, sorted_method_list) by querying the index
+        with diverse seed terms and collecting metadata from returned matches.
 
-        Pinecone list() accepts limit 1–100 per page; we paginate manually.
+        This replaces the old list()-based approach which required 160+ paginated
+        API calls (one per 100 IDs) and consistently timed out on Streamlit Cloud.
+        8 targeted queries × top_k=30 = 8 API calls, reliably surfaces all sources.
         """
+        # Diverse seeds that span the subject matter of all 7 indexed textbooks
+        _SEED_QUERIES = [
+            "cost-effectiveness analysis QALY willingness to pay threshold",
+            "instrumental variables endogeneity two-stage least squares",
+            "propensity score matching inverse probability weighting selection bias",
+            "difference in differences parallel trends staggered adoption",
+            "survival analysis censoring Kaplan-Meier Cox proportional hazards",
+            "Markov model decision tree transition probability health states",
+            "regression discontinuity quasi-experimental causal inference",
+            "generalized linear model gamma distribution healthcare costs GLM",
+        ]
+
         unique_sources: set[str] = set()
         unique_methods: set[str] = set()
 
         try:
-            # Paginate through all IDs, 100 at a time (Pinecone max per page)
-            for id_batch in self._index.list(limit=100):
-                for vid in id_batch:
-                    src = self._source_from_id(vid)
+            embeddings = self._embedder.encode(_SEED_QUERIES, show_progress_bar=False)
+
+            for emb in embeddings.tolist():
+                resp = self._index.query(
+                    vector=emb,
+                    top_k=30,
+                    include_metadata=True,
+                )
+                for match in (resp.get("matches") or []):
+                    meta = match.get("metadata") or {}
+                    src = meta.get("source_file", "")
                     if src:
                         unique_sources.add(src)
-
-            if not unique_sources:
-                return [], []
-
-            # Fetch chunk __0 for each source to read method tags
-            fetch_ids = [f"{src}__0" for src in list(unique_sources)[:20]]
-            fetched = self._index.fetch(ids=fetch_ids)
-            for vec in fetched.vectors.values():
-                meta = vec.metadata or {}
-                for tag in (meta.get("detected_methods") or []):
-                    if tag:
-                        unique_methods.add(tag.strip())
+                    for tag in (meta.get("detected_methods") or []):
+                        if tag:
+                            unique_methods.add(tag.strip())
 
         except Exception:
             pass
