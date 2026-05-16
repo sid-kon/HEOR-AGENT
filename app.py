@@ -22,7 +22,7 @@ load_dotenv()
 # ── Page config (must be first Streamlit call) ────────────────────────────────
 st.set_page_config(
     page_title="HEOR RAG Agent",
-    page_icon="🔬",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -140,7 +140,7 @@ def render_response(response_dict: dict[str, Any]) -> None:
 
     # ── 1. Problem Diagnosis ──────────────────────────────────────────────────
     if diagnosis := response_dict.get("problem_diagnosis"):
-        st.info(f"🔍 **Problem Diagnosis**\n\n{diagnosis}")
+        st.info(f"**Problem Diagnosis**\n\n{diagnosis}")
 
     # ── 2. Recommended method + alternatives ─────────────────────────────────
     if method := response_dict.get("recommended_method"):
@@ -154,12 +154,12 @@ def render_response(response_dict: dict[str, Any]) -> None:
 
     # ── 3. Identifying assumption ─────────────────────────────────────────────
     if assumption := response_dict.get("identifying_assumption"):
-        st.warning(f"⚠️ **Key Identifying Assumption**\n\n{assumption}")
+        st.warning(f"**Key Identifying Assumption**\n\n{assumption}")
 
     # ── 4. Implementation ─────────────────────────────────────────────────────
     impl = response_dict.get("implementation") or {}
     if impl:
-        with st.expander("🛠 Implementation", expanded=False):
+        with st.expander("Implementation", expanded=False):
             if spec := impl.get("estimator_specification"):
                 st.markdown("**Estimator Specification**")
                 if "\\" in spec:
@@ -179,13 +179,13 @@ def render_response(response_dict: dict[str, Any]) -> None:
     # ── 5. Assumption tests ───────────────────────────────────────────────────
     tests = response_dict.get("assumption_tests") or []
     if tests:
-        with st.expander("✅ Assumption Tests", expanded=False):
+        with st.expander("Assumption Tests", expanded=False):
             for t in tests:
                 st.markdown(f"- {t}")
 
     # ── 6. HTA reporting ─────────────────────────────────────────────────────
     if hta := response_dict.get("hta_reporting"):
-        with st.expander("📋 HTA Reporting (CHEERS/ISPOR)", expanded=False):
+        with st.expander("HTA Reporting (CHEERS/ISPOR)", expanded=False):
             st.markdown(hta)
 
     # ── 7. Citations + PubMed evidence ───────────────────────────────────────
@@ -195,7 +195,7 @@ def render_response(response_dict: dict[str, Any]) -> None:
     has_pubmed = bool(pubmed_context)
 
     if has_citations or has_pubmed:
-        with st.expander("📚 Citations & PubMed Evidence", expanded=True):
+        with st.expander("Citations & PubMed Evidence", expanded=True):
             if has_citations:
                 rows = []
                 for c in citations:
@@ -241,7 +241,7 @@ def render_response(response_dict: dict[str, Any]) -> None:
     expanded_queries = response_dict.get("expanded_queries") or []
     raw_context      = response_dict.get("raw_context") or ""
     pubmed_ctx_debug = response_dict.get("pubmed_context") or ""
-    with st.expander("📊 Retrieval Debug", expanded=False):
+    with st.expander("Retrieval Debug", expanded=False):
         if expanded_queries:
             st.markdown("**Expanded Queries**")
             for q in expanded_queries:
@@ -266,7 +266,7 @@ unique_sources  = stats["unique_sources"]
 
 with st.sidebar:
     # ── 1. Header ─────────────────────────────────────────────────────────────
-    st.markdown("## 📚 Knowledge Base")
+    st.markdown("## Knowledge Base")
     st.caption(
         f"{total_chunks:,} chunks indexed across "
         f"{unique_sources} source{'s' if unique_sources != 1 else ''}"
@@ -292,7 +292,7 @@ with st.sidebar:
     st.divider()
 
     # ── 2. PDF uploader + metadata form ──────────────────────────────────────
-    st.markdown("### 📄 Ingest Documents")
+    st.markdown("### Ingest Documents")
 
     uploaded_files = st.file_uploader(
         "Upload HEOR PDFs",
@@ -306,7 +306,7 @@ with st.sidebar:
     )
 
     # Metadata form (always visible so authors can pre-fill before upload)
-    with st.expander("📝 Document Metadata (optional)", expanded=bool(uploaded_files)):
+    with st.expander("Document Metadata (optional)", expanded=bool(uploaded_files)):
         author_title = st.text_input(
             "Author / Title",
             placeholder="e.g. Wooldridge 2010 — Econometric Analysis",
@@ -330,7 +330,7 @@ with st.sidebar:
     # ── 3. Ingest button ──────────────────────────────────────────────────────
     ingest_disabled = not uploaded_files
     if st.button(
-        "⬆️ Ingest PDFs",
+        "Ingest PDFs",
         use_container_width=True,
         type="primary",
         disabled=ingest_disabled,
@@ -383,7 +383,7 @@ with st.sidebar:
                         )
                     for s in fail:
                         st.warning(
-                            f"⚠️ {s['filename']} — {s['status']}"
+                            f"{s['filename']} — {s['status']}"
                         )
 
                     # Refresh retriever/chain so new docs are immediately queryable
@@ -407,7 +407,7 @@ with st.sidebar:
 
     # ── 4. Indexed sources expander ───────────────────────────────────────────
     with st.expander(
-        f"🗂 Indexed Sources ({unique_sources})",
+        f"Indexed Sources ({unique_sources})",
         expanded=unique_sources > 0 and unique_sources <= 8,
     ):
         if indexed_sources:
@@ -420,7 +420,7 @@ with st.sidebar:
 
     # ── 5. PubMed validation toggle ───────────────────────────────────────────
     st.toggle(
-        "🔬 Enable PubMed retrieval",
+        "Enable PubMed retrieval",
         key="pubmed_enabled",
         help=(
             "Before generating a response, search PubMed for peer-reviewed "
@@ -432,7 +432,7 @@ with st.sidebar:
     st.divider()
 
     # ── 6. Clear history ──────────────────────────────────────────────────────
-    if st.button("🗑️ Clear History", use_container_width=True):
+    if st.button("Clear History", use_container_width=True):
         st.session_state.messages = []
         if st.session_state.chain is not None:
             st.session_state.chain.clear_history()
@@ -442,13 +442,13 @@ with st.sidebar:
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN AREA
 # ═════════════════════════════════════════════════════════════════════════════
-st.markdown("## 🔬 HEOR Microeconometrics Agent")
+st.markdown("## HEOR Microeconometrics Agent")
 
 chain = _ensure_chain()
 
 # ── Method filter row ─────────────────────────────────────────────────────────
 st.multiselect(
-    "🔧 Active method filters",
+    "Active method filters",
     options=available_methods,
     key="active_methods",
     help=(
@@ -472,9 +472,9 @@ api_ready = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
 docs_ready = total_chunks > 0
 
 if not api_ready:
-    st.info("🔑 Enter your Anthropic API key in the sidebar to start querying.")
+    st.info("Enter your Anthropic API key in the sidebar to start querying.")
 elif not docs_ready:
-    st.info("📄 Ingest at least one PDF from the sidebar to start querying.")
+    st.info("Ingest at least one PDF from the sidebar to start querying.")
 
 user_query = st.chat_input(
     "Describe your HEOR problem…",
