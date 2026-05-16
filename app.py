@@ -74,6 +74,9 @@ def _init_session_state() -> None:
     if "chain" not in st.session_state:
         st.session_state.chain = None
 
+    if "user_api_key" not in st.session_state:
+        st.session_state.user_api_key = ""
+
     if "active_methods" not in st.session_state:
         st.session_state.active_methods = []
 
@@ -135,19 +138,23 @@ def _refresh_kb_cache() -> None:
 
 
 def _ensure_chain() -> HEORAgentChain | None:
-    """Return (and lazily create) the chain, or None if keys are missing."""
-    if st.session_state.chain is not None:
-        return st.session_state.chain
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key or api_key == "your_key_here":
+    """Return (and lazily create) the chain using the user-supplied API key."""
+    api_key = st.session_state.get("user_api_key", "").strip()
+    if not api_key:
         return None
     if st.session_state.retriever is None:
         return None
-    st.session_state.chain = HEORAgentChain(
+    # Rebuild chain if key changed since last build
+    existing = st.session_state.chain
+    if existing is not None and getattr(existing, "_api_key_used", "") == api_key:
+        return existing
+    chain = HEORAgentChain(
         retriever=st.session_state.retriever,
         anthropic_api_key=api_key,
     )
-    return st.session_state.chain
+    chain._api_key_used = api_key   # track which key built this chain
+    st.session_state.chain = chain
+    return chain
 
 
 # ── Response renderer ─────────────────────────────────────────────────────────
@@ -316,11 +323,28 @@ with st.sidebar:
     )
     st.divider()
 
-    # ── API keys status ───────────────────────────────────────────────────────
-    if not PINECONE_API_KEY:
-        st.error("PINECONE_API_KEY not set. Add it to your .env file.")
+    # ── API key input ─────────────────────────────────────────────────────────
+    entered_key = st.text_input(
+        "Anthropic API Key",
+        type="password",
+        placeholder="sk-ant-…",
+        value=st.session_state.user_api_key,
+        help="Your personal Anthropic API key. Get one at console.anthropic.com.",
+    )
+    if entered_key != st.session_state.user_api_key:
+        st.session_state.user_api_key = entered_key
+        st.session_state.chain = None   # rebuild chain with new key
+
+    if st.session_state.user_api_key:
+        st.success("API key set", icon=None)
     else:
-        st.success("Pinecone connected", icon=None)
+        st.warning("Enter your Anthropic API key to start.", icon=None)
+
+    # ── Pinecone status ───────────────────────────────────────────────────────
+    if not PINECONE_API_KEY:
+        st.error("PINECONE_API_KEY not set. Contact the administrator.")
+    else:
+        st.success("Knowledge base connected", icon=None)
 
     st.divider()
 
@@ -368,8 +392,8 @@ with st.sidebar:
         type="primary",
         disabled=ingest_disabled,
     ):
-        if not os.getenv("ANTHROPIC_API_KEY", "").strip():
-            st.error("Set your Anthropic API key first.")
+        if not st.session_state.get("user_api_key", "").strip():
+            st.error("Enter your Anthropic API key in the sidebar first.")
         else:
             # Save files to DATA_DIR
             saved_paths: list[str] = []
@@ -424,11 +448,7 @@ with st.sidebar:
                         index_name=PINECONE_INDEX,
                         top_k=TOP_K,
                     )
-                    if st.session_state.chain is not None:
-                        st.session_state.chain = HEORAgentChain(
-                            retriever=st.session_state.retriever,
-                            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-                        )
+                    st.session_state.chain = None   # force rebuild with current user key
                     # Invalidate source cache so the sidebar reflects new ingestion
                     _refresh_kb_cache()
 
@@ -507,17 +527,20 @@ for msg in st.session_state.messages:
             render_response(msg["content"])
 
 # ── Chat input ────────────────────────────────────────────────────────────────
+api_ready  = bool(st.session_state.get("user_api_key", "").strip())
 pine_ready = bool(PINECONE_API_KEY)
 docs_ready = total_chunks > 0
 
-if not pine_ready:
-    st.info("Add PINECONE_API_KEY to your .env file to connect the vector store.")
+if not api_ready:
+    st.info("Enter your Anthropic API key in the sidebar to start querying.")
+elif not pine_ready:
+    st.info("Knowledge base not connected — contact the administrator.")
 elif not docs_ready:
-    st.info("Ingest at least one PDF from the sidebar to start querying.")
+    st.info("No documents indexed yet — contact the administrator.")
 
 user_query = st.chat_input(
     "Describe your HEOR problem…",
-    disabled=not (pine_ready and docs_ready),
+    disabled=not (api_ready and pine_ready and docs_ready),
 )
 
 if user_query:
@@ -535,7 +558,7 @@ if user_query:
                 chain = _ensure_chain()
                 if chain is None:
                     raise RuntimeError(
-                        "API key is not set. Add ANTHROPIC_API_KEY to your .env file."
+                        "Enter your Anthropic API key in the sidebar to run queries."
                     )
                 result = chain.run_sync(
                     user_query,
