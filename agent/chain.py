@@ -32,9 +32,7 @@ from rag.prompts import (
 _MAX_HISTORY_TURNS = 8   # user + assistant messages combined
 _MAX_RETRY = 4
 _DEFAULT_MODEL = "claude-sonnet-4-20250514"
-# Haiku handles cheap preprocessing steps (rewrite, expansion) —
-# keeps them out of the Sonnet TPM bucket entirely.
-_FAST_MODEL = "claude-3-5-haiku-20241022"
+_FAST_MODEL    = _DEFAULT_MODEL   # use same model; token savings come from context caps
 
 # Hard cap on the enriched context string fed to the generation prompt.
 # ~12 000 chars ≈ 3 000 tokens, leaving headroom for system + output.
