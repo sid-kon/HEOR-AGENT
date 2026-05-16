@@ -27,16 +27,17 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-from rag.ingestion import PDFIngestion, run_ingestion_pipeline
-from rag.retriever import HEORRetriever
+from rag.pinecone_ingestion import PineconeIngestion, run_pinecone_ingestion_pipeline
+from rag.pinecone_retriever import PineconeRetriever
 from agent.chain import HEORAgentChain
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./vectorstore")
-DATA_DIR    = os.getenv("PDF_DATA_DIR", "./data")
-CHUNK_SIZE  = int(os.getenv("CHUNK_SIZE", "600"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
-TOP_K = int(os.getenv("TOP_K_RETRIEVAL", "5"))
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
+PINECONE_INDEX   = os.getenv("PINECONE_INDEX", "heor-rag")
+DATA_DIR         = os.getenv("PDF_DATA_DIR", "./data")
+CHUNK_SIZE       = int(os.getenv("CHUNK_SIZE", "600"))
+CHUNK_OVERLAP    = int(os.getenv("CHUNK_OVERLAP", "100"))
+TOP_K            = int(os.getenv("TOP_K_RETRIEVAL", "5"))
 
 HEOR_DOMAINS = ["CEA", "BIA", "Epidemiology", "Decision Modelling", "Pharmacoecon"]
 
@@ -44,27 +45,34 @@ HEOR_DOMAINS = ["CEA", "BIA", "Epidemiology", "Decision Modelling", "Pharmacoeco
 # ── Session-state initialisation ──────────────────────────────────────────────
 def _init_session_state() -> None:
     """Called once per session; subsequent reruns skip already-set keys."""
-    Path(PERSIST_DIR).mkdir(parents=True, exist_ok=True)
     Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
 
     if "messages" not in st.session_state:
-        st.session_state.messages = []          # list[{role, content}]
+        st.session_state.messages = []
 
     if "ingestion" not in st.session_state:
-        st.session_state.ingestion = PDFIngestion(
-            persist_dir=PERSIST_DIR,
-            chunk_size=CHUNK_SIZE,
-            chunk_overlap=CHUNK_OVERLAP,
-        )
+        if PINECONE_API_KEY:
+            st.session_state.ingestion = PineconeIngestion(
+                api_key=PINECONE_API_KEY,
+                index_name=PINECONE_INDEX,
+                chunk_size=CHUNK_SIZE,
+                chunk_overlap=CHUNK_OVERLAP,
+            )
+        else:
+            st.session_state.ingestion = None
 
     if "retriever" not in st.session_state:
-        st.session_state.retriever = HEORRetriever(
-            persist_dir=PERSIST_DIR,
-            top_k=TOP_K,
-        )
+        if PINECONE_API_KEY:
+            st.session_state.retriever = PineconeRetriever(
+                api_key=PINECONE_API_KEY,
+                index_name=PINECONE_INDEX,
+                top_k=TOP_K,
+            )
+        else:
+            st.session_state.retriever = None
 
     if "chain" not in st.session_state:
-        st.session_state.chain = None           # lazily built after API key check
+        st.session_state.chain = None
 
     if "active_methods" not in st.session_state:
         st.session_state.active_methods = []
@@ -78,36 +86,27 @@ _init_session_state()
 
 # ── KB info helper (single collection scan per render) ────────────────────────
 def _get_kb_info() -> tuple[dict, list[str], list[str]]:
-    """Return (stats_dict, sorted_source_list, sorted_method_list) from one Chroma get() call."""
+    """Return (stats_dict, sorted_source_list, sorted_method_list) from Pinecone."""
     try:
-        ingestion: PDFIngestion = st.session_state.ingestion
-        result = ingestion._collection.get(include=["metadatas"])
-        metas: list[dict] = result.get("metadatas") or []
-        unique_sources: set[str] = set()
-        unique_methods: set[str] = set()
-        for m in metas:
-            if m and "source_file" in m:
-                unique_sources.add(m["source_file"])
-            if m and m.get("detected_methods"):
-                for tag in m["detected_methods"].split(","):
-                    tag = tag.strip()
-                    if tag:
-                        unique_methods.add(tag)
-        stats = {
-            "total_documents": len(metas),
-            "unique_sources": len(unique_sources),
-        }
-        return stats, sorted(unique_sources), sorted(unique_methods)
+        ingestion: PineconeIngestion = st.session_state.ingestion
+        if ingestion is None:
+            return {"total_documents": 0, "unique_sources": 0}, [], []
+        raw_stats = ingestion._index.describe_index_stats()
+        total     = raw_stats.get("total_vector_count", 0)
+        sources, methods = ingestion.get_indexed_sources_and_methods()
+        return {"total_documents": total, "unique_sources": len(sources)}, sources, methods
     except Exception:
         return {"total_documents": 0, "unique_sources": 0}, [], []
 
 
 def _ensure_chain() -> HEORAgentChain | None:
-    """Return (and lazily create) the chain, or None if no API key is set."""
+    """Return (and lazily create) the chain, or None if keys are missing."""
     if st.session_state.chain is not None:
         return st.session_state.chain
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key or api_key == "your_key_here":
+        return None
+    if st.session_state.retriever is None:
         return None
     st.session_state.chain = HEORAgentChain(
         retriever=st.session_state.retriever,
@@ -273,7 +272,7 @@ with st.sidebar:
     )
     st.divider()
 
-    # ── API key (show input only if not already loaded from .env) ─────────────
+    # ── API keys status ───────────────────────────────────────────────────────
     env_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not env_key or env_key == "your_key_here":
         entered_key = st.text_input(
@@ -284,10 +283,14 @@ with st.sidebar:
         )
         if entered_key:
             os.environ["ANTHROPIC_API_KEY"] = entered_key
-            # Force chain re-creation with new key
             st.session_state.chain = None
     else:
-        st.success("API key loaded from .env ✅", icon=None)
+        st.success("Anthropic API key loaded", icon=None)
+
+    if not PINECONE_API_KEY:
+        st.error("PINECONE_API_KEY not set. Add it to your .env file.")
+    else:
+        st.success("Pinecone connected", icon=None)
 
     st.divider()
 
@@ -364,9 +367,10 @@ with st.sidebar:
             progress = st.progress(0, text="Starting ingestion…")
             with st.spinner("Ingesting PDFs…"):
                 try:
-                    summaries = run_ingestion_pipeline(
+                    summaries = run_pinecone_ingestion_pipeline(
                         pdf_paths=saved_paths,
-                        persist_dir=PERSIST_DIR,
+                        api_key=PINECONE_API_KEY,
+                        index_name=PINECONE_INDEX,
                         metadata_list=metadata_list if any(overrides) else None,
                     )
                     progress.progress(100, text="Done!")
@@ -382,19 +386,18 @@ with st.sidebar:
                             + ", ".join(s["filename"] for s in ok)
                         )
                     for s in fail:
-                        st.warning(
-                            f"{s['filename']} — {s['status']}"
-                        )
+                        st.warning(f"{s['filename']} — {s['status']}")
 
                     # Refresh retriever/chain so new docs are immediately queryable
-                    st.session_state.retriever = HEORRetriever(
-                        persist_dir=PERSIST_DIR, top_k=TOP_K
+                    st.session_state.retriever = PineconeRetriever(
+                        api_key=PINECONE_API_KEY,
+                        index_name=PINECONE_INDEX,
+                        top_k=TOP_K,
                     )
                     if st.session_state.chain is not None:
-                        api_key = os.getenv("ANTHROPIC_API_KEY", "")
                         st.session_state.chain = HEORAgentChain(
                             retriever=st.session_state.retriever,
-                            anthropic_api_key=api_key,
+                            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
                         )
 
                     st.rerun()
@@ -468,17 +471,20 @@ for msg in st.session_state.messages:
             render_response(msg["content"])
 
 # ── Chat input ────────────────────────────────────────────────────────────────
-api_ready = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
-docs_ready = total_chunks > 0
+api_ready   = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
+pine_ready  = bool(PINECONE_API_KEY)
+docs_ready  = total_chunks > 0
 
 if not api_ready:
     st.info("Enter your Anthropic API key in the sidebar to start querying.")
+elif not pine_ready:
+    st.info("Add PINECONE_API_KEY to your .env file to connect the vector store.")
 elif not docs_ready:
     st.info("Ingest at least one PDF from the sidebar to start querying.")
 
 user_query = st.chat_input(
     "Describe your HEOR problem…",
-    disabled=not (api_ready and docs_ready),
+    disabled=not (api_ready and pine_ready and docs_ready),
 )
 
 if user_query:
