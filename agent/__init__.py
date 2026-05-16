@@ -1,3 +1,1 @@
-from .chain import HEORAgentChain
-
-__all__ = ["HEORAgentChain"]
+# Lazy package — do not eagerly import chain here (avoids chromadb at import time).

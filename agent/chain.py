@@ -4,9 +4,9 @@ Conversational HEOR agent chain.
 HEORAgentChain orchestrates the full RAG pipeline:
   1. Question rewriting (STANDALONE_QUESTION_PROMPT)
   2. Query expansion  (QUERY_EXPANSION_PROMPT)
-  3. ChromaDB multi-query retrieval via HEORRetriever
+  3. Pinecone multi-query retrieval via PineconeRetriever
   4. PubMed pre-retrieval via PubMed MCP server (optional)
-  5. Enriched context = ChromaDB + PubMed combined
+  5. Enriched context = Pinecone + PubMed combined
   6. Grounded generation (RAG_GENERATION_PROMPT)
   7. Chat-history management (max 8 turns)
 
@@ -16,7 +16,7 @@ is never blocked. run_sync() wraps run() with asyncio.run() for Streamlit.
 
 import asyncio
 import re
-from typing import Optional
+from typing import Any, Optional
 
 import anthropic
 
@@ -28,7 +28,6 @@ from rag.prompts import (
     STANDALONE_QUESTION_PROMPT,
     parse_llm_json,
 )
-from rag.retriever import HEORRetriever
 
 _MAX_HISTORY_TURNS = 8   # user + assistant messages combined
 _MAX_RETRY = 3
@@ -70,7 +69,7 @@ class HEORAgentChain:
 
     def __init__(
         self,
-        retriever: HEORRetriever,
+        retriever: Any,          # PineconeRetriever (or any retriever with .retrieve / .format_context)
         anthropic_api_key: str,
         model: str = _DEFAULT_MODEL,
     ) -> None:
