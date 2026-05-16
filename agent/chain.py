@@ -30,8 +30,17 @@ from rag.prompts import (
 )
 
 _MAX_HISTORY_TURNS = 8   # user + assistant messages combined
-_MAX_RETRY = 3
+_MAX_RETRY = 4
 _DEFAULT_MODEL = "claude-sonnet-4-20250514"
+# Haiku handles cheap preprocessing steps (rewrite, expansion) —
+# keeps them out of the Sonnet TPM bucket entirely.
+_FAST_MODEL = "claude-3-5-haiku-20241022"
+
+# Hard cap on the enriched context string fed to the generation prompt.
+# ~12 000 chars ≈ 3 000 tokens, leaving headroom for system + output.
+_MAX_CONTEXT_CHARS = 12_000
+# Max chars for PubMed summary injected into context
+_MAX_PUBMED_CHARS  = 1_500
 
 # ── PubMed MCP config ─────────────────────────────────────────────────────────
 _PUBMED_MCP_SERVER: dict = {
@@ -125,10 +134,14 @@ class HEORAgentChain:
         if pubmed_enabled:
             pubmed_context = await self._fetch_pubmed_context(standalone, problem_type)
 
-        # ── Step 5: combine ChromaDB + PubMed into enriched context ──────────
+        # ── Step 5: combine Pinecone + PubMed into enriched context ─────────
+        # Hard-cap PubMed summary to avoid token bloat
+        if pubmed_context and len(pubmed_context) > _MAX_PUBMED_CHARS:
+            pubmed_context = pubmed_context[:_MAX_PUBMED_CHARS] + " … [truncated]"
+
         if pubmed_context:
             enriched_context = (
-                "=== TEXTBOOK METHODOLOGY (ChromaDB) ===\n"
+                "=== TEXTBOOK METHODOLOGY ===\n"
                 f"{chroma_context}\n\n"
                 "=== PEER-REVIEWED EMPIRICAL EVIDENCE (PubMed) ===\n"
                 f"{pubmed_context}"
@@ -136,8 +149,12 @@ class HEORAgentChain:
         else:
             enriched_context = chroma_context
 
+        # Cap total context fed to the generation prompt (~3 000 tokens)
+        if len(enriched_context) > _MAX_CONTEXT_CHARS:
+            enriched_context = enriched_context[:_MAX_CONTEXT_CHARS] + "\n… [context truncated]"
+
         # ── Step 6: grounded generation ───────────────────────────────────────
-        history_str = self._format_history(last_n=4)
+        history_str = self._format_history(last_n=2)   # 2 turns keeps token cost low
         generation_prompt = RAG_GENERATION_PROMPT.format(
             retrieved_context=enriched_context,
             user_query=user_query,
@@ -192,6 +209,7 @@ class HEORAgentChain:
     async def _rewrite_question(self, follow_up: str) -> str:
         """
         Call STANDALONE_QUESTION_PROMPT to make the follow-up self-contained.
+        Uses Haiku — simple rewrite task, keeps it out of the Sonnet TPM bucket.
         Returns the rewritten question string, falling back to the original on error.
         """
         prompt = STANDALONE_QUESTION_PROMPT.format(
@@ -200,6 +218,8 @@ class HEORAgentChain:
         )
         rewritten = await self._call_claude(
             messages=[{"role": "user", "content": prompt}],
+            model_override=_FAST_MODEL,
+            max_tokens=256,
         )
         return rewritten.strip() or follow_up
 
@@ -208,6 +228,7 @@ class HEORAgentChain:
     ) -> dict:
         """
         Call QUERY_EXPANSION_PROMPT and parse the JSON result.
+        Uses Haiku — JSON classification task, keeps it out of the Sonnet TPM bucket.
         Returns an empty dict on failure — callers must handle missing keys.
         """
         prompt = QUERY_EXPANSION_PROMPT.format(
@@ -216,6 +237,8 @@ class HEORAgentChain:
         )
         raw = await self._call_claude(
             messages=[{"role": "user", "content": prompt}],
+            model_override=_FAST_MODEL,
+            max_tokens=400,
         )
         return parse_llm_json(raw)
 
@@ -273,17 +296,22 @@ class HEORAgentChain:
         self,
         messages: list[dict],
         system: Optional[str] = None,
+        model_override: Optional[str] = None,
+        max_tokens: int = 1_800,
     ) -> str:
         """
         Call the Anthropic messages endpoint with exponential backoff retry
-        on rate-limit errors (max 3 attempts: waits 1 s, 2 s before giving up).
+        on rate-limit errors.
 
+        Backoff schedule (4 attempts): 15 s → 30 s → 60 s then raise.
         Runs the blocking SDK call in a thread so the event loop stays free.
         """
+        model = model_override or self.model
+
         def _api_call() -> str:
             kwargs: dict = {
-                "model": self.model,
-                "max_tokens": 2000,
+                "model": model,
+                "max_tokens": max_tokens,
                 "messages": messages,
             }
             if system:
@@ -300,7 +328,8 @@ class HEORAgentChain:
                 last_exc = exc
                 if attempt == _MAX_RETRY - 1:
                     break
-                await asyncio.sleep(2 ** attempt)   # 1 s, 2 s
+                wait = 15 * (2 ** attempt)   # 15 s, 30 s, 60 s
+                await asyncio.sleep(wait)
             except anthropic.APIStatusError as exc:
                 # Surface non-rate-limit API errors immediately.
                 raise exc
