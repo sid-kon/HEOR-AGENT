@@ -167,15 +167,16 @@ class PineconeIngestion:
         """
         Return (sorted_source_list, sorted_method_list) by sampling vectors
         from the index. Used by the sidebar UI.
+
+        Pinecone list() accepts limit 1–100 per page; we paginate manually.
         """
         unique_sources: set[str] = set()
         unique_methods: set[str] = set()
 
         try:
-            # Sample up to 10 000 IDs via list pagination
-            for id_batch in self._index.list(limit=10_000):
+            # Paginate through all IDs, 100 at a time (Pinecone max per page)
+            for id_batch in self._index.list(limit=100):
                 for vid in id_batch:
-                    # IDs are "{filename}__{chunk_index}" — parse filename
                     src = self._source_from_id(vid)
                     if src:
                         unique_sources.add(src)
@@ -183,13 +184,12 @@ class PineconeIngestion:
             if not unique_sources:
                 return [], []
 
-            # Fetch a few vectors per source to collect method tags
-            fetched = self._index.fetch(
-                ids=[f"{src}__0" for src in list(unique_sources)[:20]]
-            )
-            for vec in (fetched.get("vectors") or {}).values():
-                meta = vec.get("metadata") or {}
-                for tag in meta.get("detected_methods") or []:
+            # Fetch chunk __0 for each source to read method tags
+            fetch_ids = [f"{src}__0" for src in list(unique_sources)[:20]]
+            fetched = self._index.fetch(ids=fetch_ids)
+            for vec in fetched.vectors.values():
+                meta = vec.metadata or {}
+                for tag in (meta.get("detected_methods") or []):
                     if tag:
                         unique_methods.add(tag.strip())
 
@@ -202,7 +202,7 @@ class PineconeIngestion:
         """Delete all vectors whose source_file matches filename."""
         deleted = 0
         try:
-            for id_batch in self._index.list(prefix=f"{filename}__", limit=1_000):
+            for id_batch in self._index.list(prefix=f"{filename}__", limit=100):
                 if id_batch:
                     self._index.delete(ids=id_batch)
                     deleted += len(id_batch)
@@ -213,7 +213,7 @@ class PineconeIngestion:
     def _list_unique_sources(self) -> set[str]:
         sources: set[str] = set()
         try:
-            for id_batch in self._index.list(limit=10_000):
+            for id_batch in self._index.list(limit=100):
                 for vid in id_batch:
                     src = self._source_from_id(vid)
                     if src:
