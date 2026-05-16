@@ -172,13 +172,22 @@ def render_response(response_dict: dict[str, Any]) -> None:
                 st.code(raw, language="text")
         return
 
-    # ── 1. Problem Diagnosis ──────────────────────────────────────────────────
-    if diagnosis := response_dict.get("problem_diagnosis"):
-        st.info(f"**Problem Diagnosis**\n\n{diagnosis}")
+    # ── 1. Problem Diagnosis + recommended method ─────────────────────────────
+    diagnosis  = response_dict.get("problem_diagnosis", "")
+    method     = response_dict.get("recommended_method", "")
+    rationale  = response_dict.get("method_rationale", "")
 
-    # ── 2. Recommended method + alternatives ─────────────────────────────────
-    if method := response_dict.get("recommended_method"):
-        st.markdown(f"**Recommended Method:** {method}")
+    diagnosis_md = ""
+    if diagnosis:
+        diagnosis_md += f"**Problem Diagnosis**\n\n{diagnosis}\n\n"
+    if method:
+        diagnosis_md += f"**Recommended Method: {method}**\n\n"
+    if rationale:
+        diagnosis_md += f"{rationale}"
+    if diagnosis_md:
+        st.info(diagnosis_md.strip())
+
+    # ── 2. Alternatives ───────────────────────────────────────────────────────
 
     alternatives = response_dict.get("alternatives_considered") or []
     if alternatives:

@@ -117,6 +117,7 @@ Return ONLY valid JSON — no fences, no extra keys:
 {{
   "problem_diagnosis": "<2–3 sentences: threat, origin, direction of bias>",
   "recommended_method": "<one of the methods listed above>",
+  "method_rationale": "<2–3 sentences: why this method is the correct choice for this specific problem and data structure, referencing the econometric threat identified above>",
   "alternatives_considered": ["<Method — reason rejected>"],
   "identifying_assumption": "<key assumption for consistency>",
   "implementation": {{
