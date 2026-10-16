@@ -22,7 +22,7 @@ from typing import Any
 
 import anthropic
 
-_MODEL = "claude-sonnet-4-20250514"
+_MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 2000
 _MCP_SERVER: dict[str, str] = {
     "type": "url",

@@ -31,7 +31,7 @@ from rag.prompts import (
 
 _MAX_HISTORY_TURNS = 8   # user + assistant messages combined
 _MAX_RETRY = 4
-_DEFAULT_MODEL = "claude-sonnet-4-20250514"
+_DEFAULT_MODEL = "claude-sonnet-4-6"
 _FAST_MODEL    = _DEFAULT_MODEL   # use same model; token savings come from context caps
 
 # Hard cap on the enriched context string fed to the generation prompt.
