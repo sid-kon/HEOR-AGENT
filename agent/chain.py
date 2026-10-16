@@ -282,7 +282,7 @@ class HEORAgentChain:
         messages: list[dict],
         system: Optional[str] = None,
         model_override: Optional[str] = None,
-        max_tokens: int = 1_800,
+        max_tokens: int = 4_000,
     ) -> str:
         """
         Call the Anthropic messages endpoint with exponential backoff retry

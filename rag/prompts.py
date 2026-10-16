@@ -214,6 +214,7 @@ def parse_llm_json(text: str) -> dict:
         return {}
 
     try:
-        return json.loads(match.group())
+        # strict=False tolerates literal newlines inside strings (e.g. code_stub)
+        return json.loads(match.group(), strict=False)
     except json.JSONDecodeError:
         return {}
